@@ -3,7 +3,9 @@ using ServerData.Json;
 using System.Data;
 using System.Globalization;
 using System.Net.Http.Json;
+using System.Reflection.Metadata.Ecma335;
 using System.Text.Json;
+using System.Web;
 
 namespace ServerData;
 
@@ -14,7 +16,7 @@ internal class Program
     private static readonly string psApi = "https://ps.server.m477.pl/api/v1";
     private static readonly string psQueryRange = "/query_range?query=";
     private static readonly string listOfkWhMetric = "max_over_time(tasmota_sensors_today_[1d])";
-    private static readonly string listOfUptimeMetric = "node_time_seconds - node_boot_time_seconds";
+    private static readonly string listOfUptimeMetric = "increase((node_time_seconds - node_boot_time_seconds)[1d:1m])";
 
     private static readonly long initialDate = DateTime.Today.AddDays(-15).ToUnixTimestamp();
     private static readonly long dayBeforeDate = DateTime.Today.AddDays(-1).ToUnixTimestamp();
@@ -24,7 +26,16 @@ internal class Program
     private class RangeValues
     {
         public DateOnly Date;
-        public string? Val;
+        public JsonElement Val;
+    }
+
+    private class EnergyHistory
+    {
+        public DateOnly Created;
+        public float Kwh;
+        public decimal Cost;
+        public int Downtime;
+        public int RateId;
     }
 
     static async Task Main(string[] args)
@@ -37,14 +48,42 @@ internal class Program
         List<RangeValues>? apiEnergyConverted = apiEnergyData?.SelectMany(x =>
             new List<RangeValues>() {
                 new RangeValues {
-                    Date = DateOnly.FromDateTime(DateTimeOffset.FromUnixTimeSeconds(((JsonElement)x[0]).GetInt64()).LocalDateTime),
-                    Val = ((JsonElement)x[1]).ToString()
+                    Date = Helpers.GetDateFromUnix(((JsonElement)x[0]).GetInt64()),
+                    Val = (JsonElement)x[1]
                 },
             }).ToList();
 
-
         List<DateOnly> dbExistingData = await GetExistingDates(dataSource, apiEnergyConverted);
-        IEnumerable<RangeValues>? notExistingData = apiEnergyConverted?.Where(x => !dbExistingData.Contains(x.Date));
+        IEnumerable<RangeValues>? nonExistingData = apiEnergyConverted?.Where(x => !dbExistingData.Contains(x.Date));
+
+        if (nonExistingData == null)
+        {
+            Console.WriteLine("Wygląda na to, że dane z bazą są aktualne.");
+            return;
+        }
+
+        List<EnergyHistory> finalDataTable = new();
+
+        List<RangeValues>? apiUptimeConverted = apiUptimeData?.SelectMany(x =>
+            new List<RangeValues>() {
+                new RangeValues {
+                    Date = Helpers.GetDateFromUnix(((JsonElement)x[0]).GetInt64()),
+                    Val = (JsonElement)x[1]
+                },
+            }).ToList();
+
+        // ^^ zmiana na Dictionary, żeby łatwiej było wydobywać dane
+
+        // todo
+        foreach (var item in nonExistingData)
+            finalDataTable.Add(new EnergyHistory()
+            {
+                Created = item.Date,
+                Cost = item.Val.GetDecimal() * 0.77M,
+                Downtime = 0,
+                Kwh = item.Val.GetSingle(),
+                RateId = 5 
+            });
     }
 
     private static async Task<List<DateOnly>> GetExistingDates(NpgsqlDataSource dataSource, List<RangeValues>? listOfDates)
@@ -93,6 +132,6 @@ internal class Program
     }
 
     private static string PrometheusAPIUrl(string metric) =>
-        $"{psApi}{psQueryRange}{metric}&step=1d&start={initialDate}&end={dayBeforeDate}";
+        $@"{psApi}{psQueryRange}{metric}&step=1d&start={initialDate}&end={dayBeforeDate}";
 }
 
