@@ -3,9 +3,7 @@ using ServerData.Json;
 using System.Data;
 using System.Globalization;
 using System.Net.Http.Json;
-using System.Reflection.Metadata.Ecma335;
 using System.Text.Json;
-using System.Web;
 
 namespace ServerData;
 
@@ -64,26 +62,34 @@ internal class Program
 
         List<EnergyHistory> finalDataTable = new();
 
-        List<RangeValues>? apiUptimeConverted = apiUptimeData?.SelectMany(x =>
-            new List<RangeValues>() {
-                new RangeValues {
-                    Date = Helpers.GetDateFromUnix(((JsonElement)x[0]).GetInt64()),
-                    Val = (JsonElement)x[1]
-                },
-            }).ToList();
-
-        // ^^ zmiana na Dictionary, żeby łatwiej było wydobywać dane
+        Dictionary<DateOnly, double>? apiUptimeConverted = apiUptimeData?.SelectMany(x =>
+            new Dictionary<DateOnly, double>() {
+                [Helpers.GetDateFromUnix(((JsonElement)x[0]).GetInt64())] =
+                    Math.Round(Convert.ToDouble(((JsonElement)x[1]).GetString()!.Replace('.', ',')), 0),
+            }).ToDictionary(x => x.Key, y => y.Value);
 
         // todo
         foreach (var item in nonExistingData)
+        {
+            var getDowntime = apiUptimeConverted?[item.Date];
+
             finalDataTable.Add(new EnergyHistory()
             {
                 Created = item.Date,
-                Cost = item.Val.GetDecimal() * 0.77M,
-                Downtime = 0,
-                Kwh = item.Val.GetSingle(),
-                RateId = 5 
+                Cost = Convert.ToDecimal(item.Val.GetString(), CultureInfo.InvariantCulture) * 0.77M,
+                Downtime = getDowntime != null ? 86400 - Convert.ToInt32(getDowntime, CultureInfo.InvariantCulture) : -1,
+                Kwh = Convert.ToSingle(item.Val.GetString(), CultureInfo.InvariantCulture),
+                RateId = 5
             });
+        }
+    }
+    
+    private static async Task GetCurrentRate()
+    {
+        /* select "Id", "RateValue", "ValidTo", "Active" from "EnergyRates" 
+        where "ValidTo" >= '2022-06-01'::date and "Active" = true
+        order by "ValidTo" asc
+        limit 1 */
     }
 
     private static async Task<List<DateOnly>> GetExistingDates(NpgsqlDataSource dataSource, List<RangeValues>? listOfDates)
