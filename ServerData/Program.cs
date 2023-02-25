@@ -99,8 +99,6 @@ internal class Program
 
     private static async Task SaveDataToDb(NpgsqlDataSource dataSource, List<EnergyHistory> data)
     {
-        var prepareValues = string.Join(',', data.Select(x => $"({x.Created},'{x.Kwh}','{x.Cost}',{x.Downtime},{x.RateId})"));
-
         await using var cmd = dataSource.CreateCommand(@"
             INSERT INTO ""EnergyHistory"" (""Created"", ""Kwh"", ""Cost"", ""Downtime"", ""EnergyRateId"") VALUES (@a, @b, @c, @d, @e)");
 
