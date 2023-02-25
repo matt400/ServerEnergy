@@ -3,6 +3,7 @@ using ServerData.Json;
 using System.Data;
 using System.Globalization;
 using System.Net.Http.Json;
+using System.Reflection.Metadata.Ecma335;
 using System.Text.Json;
 
 namespace ServerData;
@@ -23,17 +24,24 @@ internal class Program
 
     private class RangeValues
     {
-        public DateOnly Date;
-        public JsonElement Val;
+        public DateOnly Date { get; set; } 
+        public JsonElement Val { get; set; }
     }
 
     private class EnergyHistory
     {
-        public DateOnly Created;
-        public float Kwh;
-        public decimal Cost;
-        public int Downtime;
-        public int RateId;
+        public DateOnly Created { get; set; }
+        public float Kwh { get; set; }
+        public decimal Cost { get; set; }
+        public int Downtime { get; set; }
+        public int RateId { get; set; }
+    }
+
+    private class RateSet
+    {
+        public DateOnly Date { get; set; }
+        public int RateId { get; set; }
+        public float RateValue { get; set; }
     }
 
     static async Task Main(string[] args)
@@ -60,36 +68,98 @@ internal class Program
             return;
         }
 
-        List<EnergyHistory> finalDataTable = new();
-
         Dictionary<DateOnly, double>? apiUptimeConverted = apiUptimeData?.SelectMany(x =>
             new Dictionary<DateOnly, double>() {
                 [Helpers.GetDateFromUnix(((JsonElement)x[0]).GetInt64())] =
                     Math.Round(Convert.ToDouble(((JsonElement)x[1]).GetString()!.Replace('.', ',')), 0),
             }).ToDictionary(x => x.Key, y => y.Value);
 
-        // todo
+        var rates = await GetCurrentRate(dataSource, apiUptimeConverted?.Keys.ToList());
+
+        List<EnergyHistory> finalDataTable = new();
+
         foreach (var item in nonExistingData)
         {
             var getDowntime = apiUptimeConverted?[item.Date];
 
+            RateSet? findRateByDate = rates.Find(x => x.Date == item.Date)
+                ?? throw new Exception("Nie można znaleźć dopasowania daty do stawki.");
+
             finalDataTable.Add(new EnergyHistory()
             {
                 Created = item.Date,
-                Cost = Convert.ToDecimal(item.Val.GetString(), CultureInfo.InvariantCulture) * 0.77M,
+                Cost = Convert.ToDecimal(item.Val.GetString(), CultureInfo.InvariantCulture) * (decimal)findRateByDate.RateValue,
                 Downtime = getDowntime != null ? 86400 - Convert.ToInt32(getDowntime, CultureInfo.InvariantCulture) : -1,
                 Kwh = Convert.ToSingle(item.Val.GetString(), CultureInfo.InvariantCulture),
-                RateId = 5
+                RateId = findRateByDate.RateId 
             });
         }
+
+        await SaveDataToDb(dataSource, finalDataTable);
     }
-    
-    private static async Task GetCurrentRate()
+
+    private static async Task SaveDataToDb(NpgsqlDataSource dataSource, List<EnergyHistory> data)
     {
-        /* select "Id", "RateValue", "ValidTo", "Active" from "EnergyRates" 
-        where "ValidTo" >= '2022-06-01'::date and "Active" = true
-        order by "ValidTo" asc
-        limit 1 */
+        var prepareValues = string.Join(',', data.Select(x => $"({x.Created},'{x.Kwh}','{x.Cost}',{x.Downtime},{x.RateId})"));
+
+        await using var cmd = dataSource.CreateCommand(@"
+            INSERT INTO ""EnergyHistory"" (""Created"", ""Kwh"", ""Cost"", ""Downtime"", ""EnergyRateId"")
+            VALUES (@a, @b, @c, @d, @e)");
+
+        var created = new NpgsqlParameter<DateOnly>("a", default(DateOnly));
+        var kwh = new NpgsqlParameter<float>("b", 0.0f);
+        var cost = new NpgsqlParameter<decimal>("c", 0.0M);
+        var downtime = new NpgsqlParameter<int>("d", 0);
+        var rateId = new NpgsqlParameter<int>("d", 0);
+
+        cmd.Parameters.Add(created);
+        cmd.Parameters.Add(kwh);
+        cmd.Parameters.Add(cost);
+        cmd.Parameters.Add(downtime);
+        cmd.Parameters.Add(rateId);
+
+        await cmd.PrepareAsync();
+
+        foreach (var item in data)
+        {
+            created.TypedValue = item.Created;
+            kwh.TypedValue = item.Kwh;
+            cost.TypedValue = item.Cost;
+            downtime.TypedValue = item.Downtime;
+            rateId.TypedValue = item.RateId;
+
+            await cmd.ExecuteNonQueryAsync();
+
+            Console.WriteLine($"Dodano dane z dnia {item.Created} do bazy.");
+        }
+    }
+
+    private static async Task<List<RateSet>> GetCurrentRate(NpgsqlDataSource dataSource, List<DateOnly>? dates)
+    {
+        if (dates == null)
+        {
+            Console.WriteLine("Nie można pobrać stawki dla określonego dnia.");
+            throw new ArgumentNullException(nameof(dates));
+        }
+
+        string prepareDates = $"{{{ string.Join(',', dates.Select(x => x.ToPostgresDate())) }}}";
+
+        await using var cmd = dataSource.CreateCommand($"select get_rate_by_date('{prepareDates}');");
+        await using var reader = await cmd.ExecuteReaderAsync();
+
+        List<RateSet> list = new();
+
+        while (await reader.ReadAsync()) {
+            object[] r = (object[])reader[0];
+
+            list.Add(new RateSet() {
+                Date = DateOnly.FromDateTime((DateTime)r[0]),
+                RateId = (int)r[1],
+                RateValue = (float)r[2]
+            });
+        }
+
+        return list;
     }
 
     private static async Task<List<DateOnly>> GetExistingDates(NpgsqlDataSource dataSource, List<RangeValues>? listOfDates)
@@ -97,7 +167,7 @@ internal class Program
         if (listOfDates == null)
             throw new ArgumentNullException(nameof(listOfDates));
 
-        var sqlWhere = string.Join(',', listOfDates.Select(x => "'" + x.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "'"));
+        var sqlWhere = string.Join(',', listOfDates.Select(x => "'" + x.Date.ToPostgresDate() + "'"));
 
         await using var cmd = dataSource.CreateCommand(@$"
             select ""Created""
