@@ -62,7 +62,7 @@ internal class Program
         List<DateOnly> dbExistingData = await GetExistingDates(dataSource, apiEnergyConverted);
         IEnumerable<RangeValues>? nonExistingData = apiEnergyConverted?.Where(x => !dbExistingData.Contains(x.Date));
 
-        if (nonExistingData == null)
+        if (nonExistingData == null || !nonExistingData.Any())
         {
             Console.WriteLine("Wygląda na to, że dane z bazą są aktualne.");
             return;
@@ -103,14 +103,13 @@ internal class Program
         var prepareValues = string.Join(',', data.Select(x => $"({x.Created},'{x.Kwh}','{x.Cost}',{x.Downtime},{x.RateId})"));
 
         await using var cmd = dataSource.CreateCommand(@"
-            INSERT INTO ""EnergyHistory"" (""Created"", ""Kwh"", ""Cost"", ""Downtime"", ""EnergyRateId"")
-            VALUES (@a, @b, @c, @d, @e)");
+            INSERT INTO ""EnergyHistory"" (""Created"", ""Kwh"", ""Cost"", ""Downtime"", ""EnergyRateId"") VALUES (@a, @b, @c, @d, @e)");
 
         var created = new NpgsqlParameter<DateOnly>("a", default(DateOnly));
         var kwh = new NpgsqlParameter<float>("b", 0.0f);
         var cost = new NpgsqlParameter<decimal>("c", 0.0M);
         var downtime = new NpgsqlParameter<int>("d", 0);
-        var rateId = new NpgsqlParameter<int>("d", 0);
+        var rateId = new NpgsqlParameter<int>("e", 0);
 
         cmd.Parameters.Add(created);
         cmd.Parameters.Add(kwh);
@@ -118,15 +117,13 @@ internal class Program
         cmd.Parameters.Add(downtime);
         cmd.Parameters.Add(rateId);
 
-        await cmd.PrepareAsync();
-
         foreach (var item in data)
         {
-            created.TypedValue = item.Created;
-            kwh.TypedValue = item.Kwh;
-            cost.TypedValue = item.Cost;
-            downtime.TypedValue = item.Downtime;
-            rateId.TypedValue = item.RateId;
+            created.Value = item.Created;
+            kwh.Value = item.Kwh;
+            cost.Value = item.Cost;
+            downtime.Value = item.Downtime;
+            rateId.Value = item.RateId;
 
             await cmd.ExecuteNonQueryAsync();
 
