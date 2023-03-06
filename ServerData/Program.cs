@@ -16,8 +16,8 @@ internal class Program
     private static readonly string listOfkWhMetric = "max_over_time(tasmota_sensors_today_[1d])";
     private static readonly string listOfUptimeMetric = "increase((node_time_seconds - node_boot_time_seconds)[1d:1m])";
 
-    private static readonly long initialDate = DateTime.Today.AddDays(-15).AddSeconds(86399).ToUniversalTime().ToUnixTimestamp();
-    private static readonly long dayBeforeDate = DateTime.Today.AddDays(-1).AddSeconds(86399).ToUniversalTime().ToUnixTimestamp();
+    private static readonly long initialDate = DateTime.Today.AddDays(-15).AddSeconds(86396).ToUniversalTime().ToUnixTimestamp();
+    private static readonly long dayBeforeDate = DateTime.Today.AddDays(-1).AddSeconds(86396).ToUniversalTime().ToUnixTimestamp();
 
     private static readonly string? connectionString = Environment.GetEnvironmentVariable("POSTGRES_CONNECTION_STRING");
 
