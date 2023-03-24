@@ -3,7 +3,9 @@ using ServerData.Json;
 using System.Data;
 using System.Globalization;
 using System.Net.Http.Json;
+using System.Reflection.Metadata.Ecma335;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace ServerData;
 
@@ -43,7 +45,7 @@ internal class Program
         public float RateValue { get; set; }
     }
 
-    static async Task Main(string[] args)
+    static async Task Main()
     {
         var apiEnergyData = await GetDataFromAPI(listOfkWhMetric);
         var apiUptimeData = await GetDataFromAPI(listOfUptimeMetric);
@@ -57,6 +59,21 @@ internal class Program
                     Val = (JsonElement)x[1]
                 },
             }).ToList();
+
+        int apiIndex = 1;
+        apiEnergyConverted?.ToList().ForEach(item =>
+        {
+            var currentDate = item.Date;
+            var nextDate = apiEnergyConverted[apiIndex].Date;
+            var difference = nextDate.DayNumber - currentDate.DayNumber;
+
+            if (difference > 1)
+                for (var cd = currentDate; cd <= nextDate; cd = cd.AddDays(1))
+                    if (cd != currentDate && cd != nextDate)
+                        apiEnergyConverted.Add(new RangeValues() { Date = cd, Val = JsonSerializer.SerializeToElement("0") }); 
+
+            apiIndex++;
+        });
 
         List<DateOnly> dbExistingData = await GetExistingDates(dataSource, apiEnergyConverted);
         IEnumerable<RangeValues>? nonExistingData = apiEnergyConverted?.Where(x => !dbExistingData.Contains(x.Date));
@@ -79,10 +96,11 @@ internal class Program
 
         foreach (var item in nonExistingData)
         {
-            var getDowntime = apiUptimeConverted?[item.Date];
+            var getDowntime = apiUptimeConverted != null && apiUptimeConverted.ContainsKey(item.Date) ?
+                                apiUptimeConverted?[item.Date] : 0;
 
-            RateSet? findRateByDate = rates.Find(x => x.Date == item.Date)
-                ?? throw new Exception("Nie można znaleźć dopasowania daty do stawki.");
+            RateSet? findRateByDate = rates.Find(x => x.Date == item.Date) ??
+                                        new RateSet() { Date = item.Date, RateId = 1, RateValue = 0 };
 
             finalDataTable.Add(new EnergyHistory()
             {
