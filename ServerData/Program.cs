@@ -63,12 +63,13 @@ internal class Program
         int apiIndex = 1;
         apiEnergyConverted?.ToList().ForEach(item =>
         {
-            var currentDate = item.Date;
-            var nextDate = apiEnergyConverted[apiIndex].Date;
+            DateOnly currentDate = item.Date;
+            DateOnly nextDate = apiEnergyConverted.Count > apiIndex ? apiEnergyConverted[apiIndex].Date : default;
+
             var difference = nextDate.DayNumber - currentDate.DayNumber;
 
             if (difference > 1)
-                for (var cd = currentDate; cd <= nextDate; cd = cd.AddDays(1))
+                for (DateOnly cd = currentDate; cd <= nextDate; cd = cd.AddDays(1))
                     if (cd != currentDate && cd != nextDate)
                         apiEnergyConverted.Add(new RangeValues() { Date = cd, Val = JsonSerializer.SerializeToElement("0") }); 
 
